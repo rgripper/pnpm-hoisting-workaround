@@ -1,0 +1,63 @@
+name: Node dist
+
+inputs:
+  workspace:
+    required: true
+    type: string
+outputs:
+  dist_path:
+    description: 'dist directory'
+    value: ${{ steps.dist.outputs.dist_path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: pnpm/action-setup@v2
+      name: Install pnpm
+      id: pnpm-install
+      with:
+        version: latest
+        run_install: false
+
+    - name: Use Node with pnpm caching
+      uses: actions/setup-node@v3
+      with:
+        node-version: lts/*
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm --filter=${{ inputs.workspace }}... install
+
+    - name: Lint
+      shell: bash
+      run: pnpm --filter=${{ inputs.workspace }} run lint
+
+    - name: Unit testing
+      shell: bash
+      run: pnpm --filter=${{ inputs.workspace }} run test
+
+    - name: Build for deployment
+      shell: bash
+      run: pnpm --filter=${{ inputs.workspace }}... run build
+
+    - name: Create dist with prod-only packages
+      id: dist
+      shell: bash
+      run: |
+        DIST_PATH=./dist
+        pnpm --filter=${{ inputs.workspace }} --prod deploy $DIST_PATH
+
+        WORKSPACE_PATH=$(pnpm --filter=${{ inputs.workspace }} exec readlink -f .)
+        mv ${WORKSPACE_PATH}/build/* ${DIST_PATH}/
+
+        # A temporary hack to only install packages that belong to this app
+        pnpm add -D -w @pnpm/find-workspace-packages
+        ROOT_PATH=$(pwd)
+        node ./.github/actions/service-dist/replace-workspace-by-file-protocol.mjs $ROOT_PATH $DIST_PATH
+        cd $DIST_PATH
+        rm -rf node_modules
+        npm i --omit=dev
+        # ===============
+
+        echo "dist_path=${DIST_PATH}" >> "$GITHUB_OUTPUT"
